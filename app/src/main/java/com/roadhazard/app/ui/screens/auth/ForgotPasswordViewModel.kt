@@ -15,7 +15,8 @@ data class ForgotPasswordUiState(
     val email: String = "",
     val isLoading: Boolean = false,
     val isEmailSent: Boolean = false,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val emailSuggestion: String? = null
 )
 
 @HiltViewModel
@@ -27,13 +28,23 @@ class ForgotPasswordViewModel @Inject constructor(
     val uiState: StateFlow<ForgotPasswordUiState> = _uiState.asStateFlow()
     
     fun onEmailChange(email: String) {
-        _uiState.value = _uiState.value.copy(email = email)
+        _uiState.value = _uiState.value.copy(email = email, emailSuggestion = null)
     }
     
     fun resetPassword() {
         val email = _uiState.value.email
         if (email.isBlank()) {
             _uiState.value = _uiState.value.copy(errorMessage = "Please enter your email")
+            return
+        }
+        
+        // Use EmailValidator from SignupViewModel
+        val emailValidation = EmailValidator.validate(email)
+        if (!emailValidation.isValid) {
+            _uiState.value = _uiState.value.copy(
+                errorMessage = emailValidation.errorMessage,
+                emailSuggestion = emailValidation.suggestion
+            )
             return
         }
         
@@ -51,7 +62,16 @@ class ForgotPasswordViewModel @Inject constructor(
         }
     }
     
+    fun acceptEmailSuggestion() {
+        val suggestion = _uiState.value.emailSuggestion ?: return
+        _uiState.value = _uiState.value.copy(
+            email = suggestion,
+            errorMessage = null,
+            emailSuggestion = null
+        )
+    }
+    
     fun clearError() {
-        _uiState.value = _uiState.value.copy(errorMessage = null)
+        _uiState.value = _uiState.value.copy(errorMessage = null, emailSuggestion = null)
     }
 }

@@ -1,5 +1,9 @@
 package com.roadhazard.app.ui.screens.auth
 
+import android.app.Activity
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -8,14 +12,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.credentials.CredentialManager
-import androidx.credentials.GetCredentialResponse
-import androidx.credentials.exceptions.GetCredentialException
 import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.launch
+
+private const val TAG = "SignupScreen"
 
 @Composable
 fun SignupScreen(
@@ -25,8 +27,30 @@ fun SignupScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    val credentialManager = CredentialManager.create(context)
+    
+    // Legacy Google Sign-In launcher
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Log.d(TAG, "Google Sign-In result: resultCode=${result.resultCode}")
+        if (result.resultCode == Activity.RESULT_OK) {
+            scope.launch {
+                try {
+                    val task = viewModel.googleAuthManager.getSignedInAccountFromIntent(result.data)
+                    viewModel.signupWithGoogleLegacy(task, onNavigateToHome)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing sign-in result: ${e.message}", e)
+                    viewModel.setErrorMessage("Failed to process sign-in: ${e.localizedMessage}")
+                }
+            }
+        } else if (result.resultCode == Activity.RESULT_CANCELED) {
+            Log.w(TAG, "Google Sign-In was cancelled by user")
+            viewModel.setErrorMessage("Sign-in was cancelled")
+        } else {
+            Log.e(TAG, "Google Sign-In failed with result code: ${result.resultCode}")
+            viewModel.setErrorMessage("Google Sign-In failed")
+        }
+    }
     
     Column(
         modifier = Modifier
@@ -96,12 +120,27 @@ fun SignupScreen(
                     .fillMaxWidth()
                     .padding(vertical = 8.dp)
             ) {
-                Text(
-                    text = uiState.errorMessage!!,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(16.dp)
-                )
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = uiState.errorMessage!!,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    
+                    // Show suggestion button if there's a suggested email correction
+                    if (uiState.emailSuggestion != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { viewModel.acceptEmailSuggestion() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Yes, use this email")
+                        }
+                    }
+                }
             }
         }
         
@@ -124,19 +163,9 @@ fun SignupScreen(
         
         OutlinedButton(
             onClick = {
-                scope.launch {
-                    try {
-                        val result: GetCredentialResponse = credentialManager.getCredential(
-                            context = context,
-                            request = viewModel.googleAuthManager.getGoogleRequest()
-                        )
-                        viewModel.signupWithGoogle(result.credential, onNavigateToHome)
-                    } catch (e: GetCredentialException) {
-                        viewModel.setErrorMessage("Google Sign-In Error: ${e.localizedMessage}")
-                    } catch (e: Exception) {
-                        viewModel.setErrorMessage("An unexpected error occurred: ${e.localizedMessage}")
-                    }
-                }
+                Log.d(TAG, "Starting legacy Google Sign-In flow...")
+                val signInIntent = viewModel.googleAuthManager.getSignInIntent()
+                googleSignInLauncher.launch(signInIntent)
             },
             modifier = Modifier.fillMaxWidth(),
             enabled = !uiState.isLoading

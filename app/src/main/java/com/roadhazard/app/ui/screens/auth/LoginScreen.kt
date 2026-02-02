@@ -2,6 +2,8 @@ package com.roadhazard.app.ui.screens.auth
 
 import android.app.Activity
 import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -10,18 +12,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.credentials.CredentialManager
-import androidx.credentials.GetCredentialResponse
-import androidx.credentials.exceptions.GetCredentialCancellationException
-import androidx.credentials.exceptions.GetCredentialException
-import androidx.credentials.exceptions.NoCredentialException
 import androidx.hilt.navigation.compose.hiltViewModel
-import kotlinx.coroutines.TimeoutCancellationException
+import com.google.android.gms.common.api.ApiException
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 private const val TAG = "LoginScreen"
 
@@ -34,9 +29,30 @@ fun LoginScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    val activity = context as? Activity
-    val credentialManager = CredentialManager.create(context)
+    
+    // Legacy Google Sign-In launcher
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Log.d(TAG, "Google Sign-In result: resultCode=${result.resultCode}")
+        if (result.resultCode == Activity.RESULT_OK) {
+            scope.launch {
+                try {
+                    val task = viewModel.googleAuthManager.getSignedInAccountFromIntent(result.data)
+                    viewModel.loginWithGoogleLegacy(task, onNavigateToHome)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing sign-in result: ${e.message}", e)
+                    viewModel.setErrorMessage("Failed to process sign-in: ${e.localizedMessage}")
+                }
+            }
+        } else if (result.resultCode == Activity.RESULT_CANCELED) {
+            Log.w(TAG, "Google Sign-In was cancelled by user")
+            viewModel.setErrorMessage("Sign-in was cancelled")
+        } else {
+            Log.e(TAG, "Google Sign-In failed with result code: ${result.resultCode}")
+            viewModel.setErrorMessage("Google Sign-In failed")
+        }
+    }
     
     Column(
         modifier = Modifier
@@ -118,51 +134,9 @@ fun LoginScreen(
         
         OutlinedButton(
             onClick = {
-                if (activity == null) {
-                    Log.e(TAG, "Activity context is null!")
-                    viewModel.setErrorMessage("Cannot start Google Sign-In: No activity context")
-                    return@OutlinedButton
-                }
-                
-                scope.launch {
-                    Log.d(TAG, "Starting Google Sign-In flow...")
-                    try {
-                        val request = viewModel.googleAuthManager.getGoogleRequest()
-                        Log.d(TAG, "Created credential request, calling getCredential...")
-                        
-                        // Add timeout of 30 seconds
-                        val result = withTimeoutOrNull(30_000L) {
-                            credentialManager.getCredential(
-                                context = activity,
-                                request = request
-                            )
-                        }
-                        
-                        if (result == null) {
-                            Log.e(TAG, "getCredential() timed out after 30 seconds!")
-                            viewModel.setErrorMessage("Google Sign-In timed out. Try using a physical device instead of an emulator, or check that Google Play Services is updated.")
-                            return@launch
-                        }
-                        
-                        Log.d(TAG, "Got credential response: ${result.credential.type}")
-                        viewModel.loginWithGoogle(result.credential, onNavigateToHome)
-                    } catch (e: TimeoutCancellationException) {
-                        Log.e(TAG, "Timeout exception: ${e.message}", e)
-                        viewModel.setErrorMessage("Google Sign-In timed out. Please try again.")
-                    } catch (e: NoCredentialException) {
-                        Log.e(TAG, "NoCredentialException: ${e.message}", e)
-                        viewModel.setErrorMessage("No Google accounts found. Please add a Google account to your device.")
-                    } catch (e: GetCredentialCancellationException) {
-                        Log.w(TAG, "User cancelled sign-in: ${e.message}")
-                        viewModel.setErrorMessage("Sign-in was cancelled")
-                    } catch (e: GetCredentialException) {
-                        Log.e(TAG, "GetCredentialException: type=${e.type}, message=${e.message}", e)
-                        viewModel.setErrorMessage("Google Sign-In Error: ${e.type} - ${e.message}")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Unexpected error during sign-in: ${e.javaClass.simpleName} - ${e.message}", e)
-                        viewModel.setErrorMessage("An unexpected error occurred: ${e.localizedMessage}")
-                    }
-                }
+                Log.d(TAG, "Starting legacy Google Sign-In flow...")
+                val signInIntent = viewModel.googleAuthManager.getSignInIntent()
+                googleSignInLauncher.launch(signInIntent)
             },
             modifier = Modifier.fillMaxWidth(),
             enabled = !uiState.isLoading
