@@ -1,0 +1,9 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme using AppCompat for Compose compatibility -->
+    <style name="Base.Theme.RoadHazardDetection" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <!-- Customize your theme here -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.RoadHazardDetection" parent="Base.Theme.RoadHazardDetection" />
+</resources>
