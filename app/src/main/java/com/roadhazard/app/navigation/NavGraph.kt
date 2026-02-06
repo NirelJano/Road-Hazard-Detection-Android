@@ -12,6 +12,7 @@ import com.roadhazard.app.ui.screens.dashboard.DashboardScreen
 import com.roadhazard.app.ui.screens.home.HomeScreen
 import com.roadhazard.app.ui.screens.settings.SettingsScreen
 import com.roadhazard.app.ui.screens.settings.ChangePasswordScreen
+import com.roadhazard.app.ui.screens.upload.UploadScreen
 
 @Composable
 fun NavGraph(
@@ -92,7 +93,11 @@ fun NavGraph(
         }
         
         composable(route = Screen.Upload.route) {
-            // Placeholder - UploadScreen to be created
+            UploadScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
         }
 
         composable(route = Screen.Settings.route) {
