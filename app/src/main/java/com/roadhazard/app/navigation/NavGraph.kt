@@ -7,7 +7,11 @@ import androidx.navigation.compose.composable
 import com.roadhazard.app.ui.screens.auth.ForgotPasswordScreen
 import com.roadhazard.app.ui.screens.auth.LoginScreen
 import com.roadhazard.app.ui.screens.auth.SignupScreen
+
+import com.roadhazard.app.ui.screens.dashboard.DashboardScreen
 import com.roadhazard.app.ui.screens.home.HomeScreen
+import com.roadhazard.app.ui.screens.settings.SettingsScreen
+import com.roadhazard.app.ui.screens.settings.ChangePasswordScreen
 
 @Composable
 fun NavGraph(
@@ -68,6 +72,9 @@ fun NavGraph(
                 onNavigateToLiveDetection = {
                     navController.navigate(Screen.Camera.route)
                 },
+                onNavigateToSettings = {
+                    navController.navigate(Screen.Settings.route)
+                },
                 onLogout = {
                     navController.navigate(Screen.Login.route) {
                         popUpTo(Screen.Home.route) { inclusive = true }
@@ -77,7 +84,7 @@ fun NavGraph(
         }
         
         composable(route = Screen.Dashboard.route) {
-            // Placeholder - DashboardScreen to be created
+            DashboardScreen()
         }
         
         composable(route = Screen.Camera.route) {
@@ -86,6 +93,25 @@ fun NavGraph(
         
         composable(route = Screen.Upload.route) {
             // Placeholder - UploadScreen to be created
+        }
+
+        composable(route = Screen.Settings.route) {
+            SettingsScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+                onNavigateToChangePassword = {
+                    navController.navigate(Screen.ChangePassword.route)
+                }
+            )
+        }
+
+        composable(route = Screen.ChangePassword.route) {
+            ChangePasswordScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
         }
     }
 }

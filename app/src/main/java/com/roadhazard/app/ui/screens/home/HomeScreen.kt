@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -22,6 +23,7 @@ fun HomeScreen(
     onNavigateToDashboard: () -> Unit,
     onNavigateToUpload: () -> Unit,
     onNavigateToLiveDetection: () -> Unit,
+    onNavigateToSettings: () -> Unit,
     onLogout: () -> Unit
 ) {
     Scaffold(
@@ -91,6 +93,15 @@ fun HomeScreen(
                 text = "Live Detection",
                 icon = Icons.Default.CameraAlt,
                 onClick = onNavigateToLiveDetection,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            HomeActionButton(
+                text = "Settings",
+                icon = Icons.Default.Settings,
+                onClick = onNavigateToSettings,
                 modifier = Modifier.fillMaxWidth()
             )
             

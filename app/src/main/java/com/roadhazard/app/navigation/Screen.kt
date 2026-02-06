@@ -11,6 +11,8 @@ sealed class Screen(val route: String) {
     data object Dashboard : Screen("dashboard")
     data object Camera : Screen("camera")
     data object Upload : Screen("upload")
+    data object Settings : Screen("settings")
+    data object ChangePassword : Screen("change_password")
     
     // Utility function to handle navigation with arguments
     fun withArgs(vararg args: String): String {
