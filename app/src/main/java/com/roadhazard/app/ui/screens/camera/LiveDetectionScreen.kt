@@ -155,16 +155,16 @@ fun LiveDetectionScreen(
     if (showPermissionRationaleDialog) {
         AlertDialog(
             onDismissRequest = { showPermissionRationaleDialog = false },
-            title = { Text("הרשאות נדרשות") },
+            title = { Text("Permissions Required") },
             text = { 
-                Text("האפליקציה זקוקה להרשאות מצלמה ומיקום כדי לזהות מפגעים בכבישים ולדווח עליהם במיקום המדויק.")
+                Text("The app needs Camera and Location permissions to detect road hazards and report them at the correct location.")
             },
             confirmButton = {
                 TextButton(onClick = {
                     showPermissionRationaleDialog = false
                     permissionLauncher.launch(permissions.toTypedArray())
                 }) {
-                    Text("אשר הרשאות")
+                    Text("Grant Permissions")
                 }
             },
             dismissButton = {
@@ -172,7 +172,7 @@ fun LiveDetectionScreen(
                     showPermissionRationaleDialog = false
                     showPermissionDeniedMessage = true
                 }) {
-                    Text("ביטול")
+                    Text("Cancel")
                 }
             }
         )
@@ -182,9 +182,9 @@ fun LiveDetectionScreen(
     if (showSettingsDialog) {
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
-            title = { Text("הרשאות נדרשות") },
+            title = { Text("Permissions Required") },
             text = { 
-                Text("נראה שחסמת הרשאות באופן קבוע. אנא עבור להגדרות האפליקציה ואפשר הרשאות מצלמה ומיקום.")
+                Text("It seems you have permanently denied some permissions. Please go to App Settings and enable Camera and Location permissions.")
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -194,7 +194,7 @@ fun LiveDetectionScreen(
                     }
                     context.startActivity(intent)
                 }) {
-                    Text("פתח הגדרות")
+                    Text("Open Settings")
                 }
             },
             dismissButton = {
@@ -202,7 +202,7 @@ fun LiveDetectionScreen(
                     showSettingsDialog = false
                     showPermissionDeniedMessage = true
                 }) {
-                    Text("ביטול")
+                    Text("Cancel")
                 }
             }
         )
@@ -211,17 +211,14 @@ fun LiveDetectionScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("זיהוי בזמן אמת") },
+                title = { Text("Live Detection") },
                 navigationIcon = {
                     IconButton(onClick = {
-                        // Stop recording if active
-                        recording?.stop()
-                        recording = null
                         isRecording = false
                         isCameraOpen = false
                         onNavigateBack()
                     }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "חזור")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -251,7 +248,7 @@ fun LiveDetectionScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                     
                     Text(
-                        text = "זיהוי מפגעים בזמן אמת",
+                        text = "Real-time Hazard Detection",
                         style = MaterialTheme.typography.headlineMedium,
                         color = MaterialTheme.colorScheme.onBackground
                     )
@@ -259,7 +256,7 @@ fun LiveDetectionScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                     
                     Text(
-                        text = "לחץ על הכפתור למטה כדי לפתוח את המצלמה ולהתחיל לזהות מפגעים בכבישים",
+                        text = "Click the button below to open the camera and start detecting road hazards",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 32.dp)
@@ -280,7 +277,7 @@ fun LiveDetectionScreen(
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("פתח מצלמה", style = MaterialTheme.typography.titleMedium)
+                        Text("Open Camera", style = MaterialTheme.typography.titleMedium)
                     }
                     
                     if (showPermissionDeniedMessage) {
@@ -292,7 +289,7 @@ fun LiveDetectionScreen(
                             modifier = Modifier.padding(horizontal = 32.dp)
                         ) {
                             Text(
-                                text = "⚠️ חובה לאשר הרשאות מצלמה ומיקום כדי להשתמש בתכונה זו",
+                                text = "⚠️ Camera and Location permissions are required to use this feature",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                                 modifier = Modifier.padding(16.dp)
@@ -302,16 +299,10 @@ fun LiveDetectionScreen(
                 }
             } else {
                 // Camera is open - Show preview
-                CameraPreviewWithRecording(
+                CameraPreviewWithDetection(
                     modifier = Modifier.fillMaxSize(),
                     lifecycleOwner = lifecycleOwner,
-                    isRecording = isRecording,
-                    onRecordingToggle = { shouldRecord ->
-                        isRecording = shouldRecord
-                    },
-                    onRecordingUpdate = { rec ->
-                        recording = rec
-                    }
+                    isDetecting = isRecording
                 )
                 
                 // Recording controls overlay
@@ -354,7 +345,7 @@ fun LiveDetectionScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "מקליט",
+                                text = "Recording",
                                 color = Color.White,
                                 style = MaterialTheme.typography.labelLarge
                             )
@@ -367,63 +358,21 @@ fun LiveDetectionScreen(
 }
 
 @Composable
-fun CameraPreviewWithRecording(
+fun CameraPreviewWithDetection(
     modifier: Modifier = Modifier,
     lifecycleOwner: LifecycleOwner,
-    isRecording: Boolean,
-    onRecordingToggle: (Boolean) -> Unit,
-    onRecordingUpdate: (Recording?) -> Unit
+    isDetecting: Boolean
 ) {
     val context = LocalContext.current
     val previewView = remember { PreviewView(context) }
-    var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
-    var currentRecording by remember { mutableStateOf<Recording?>(null) }
     
-    // Handle recording state changes
-    LaunchedEffect(isRecording) {
-        if (isRecording && currentRecording == null) {
-            // Start recording
-            videoCapture?.let { capture ->
-                val videoFile = File(
-                    context.getExternalFilesDir(null),
-                    "recording_${System.currentTimeMillis()}.mp4"
-                )
-                
-                val outputOptions = FileOutputOptions.Builder(videoFile).build()
-                
-                currentRecording = capture.output
-                    .prepareRecording(context, outputOptions)
-                    .start(ContextCompat.getMainExecutor(context)) { event ->
-                        when (event) {
-                            is VideoRecordEvent.Start -> {
-                                // Recording started
-                            }
-                            is VideoRecordEvent.Finalize -> {
-                                if (!event.hasError()) {
-                                    Toast.makeText(
-                                        context,
-                                        "הקלטה נשמרה: ${videoFile.absolutePath}",
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                } else {
-                                    Toast.makeText(
-                                        context,
-                                        "שגיאה בהקלטה",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                                currentRecording = null
-                                onRecordingUpdate(null)
-                            }
-                        }
-                    }
-                onRecordingUpdate(currentRecording)
-            }
-        } else if (!isRecording && currentRecording != null) {
-            // Stop recording
-            currentRecording?.stop()
-            currentRecording = null
-            onRecordingUpdate(null)
+    // In the future, this is where we would trigger/stop the AI detection loop
+    LaunchedEffect(isDetecting) {
+        if (isDetecting) {
+            // Future AI detection logic starts here
+            // For now, we just simulate the "recording" UI state which the user requested
+        } else {
+            // Stop AI detection logic
         }
     }
     
@@ -437,13 +386,8 @@ fun CameraPreviewWithRecording(
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
             
-            val recorder = Recorder.Builder()
-                .setQualitySelector(
-                    androidx.camera.video.QualitySelector.from(Quality.HD)
-                )
-                .build()
-            
-            videoCapture = VideoCapture.withOutput(recorder)
+            // We only need the preview for now since we aren't saving video
+            // In the future we will add ImageAnalysis here
             
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
             
@@ -452,19 +396,16 @@ fun CameraPreviewWithRecording(
                 cameraProvider.bindToLifecycle(
                     lifecycleOwner,
                     cameraSelector,
-                    preview,
-                    videoCapture
+                    preview
                 )
             } catch (e: Exception) {
                 e.printStackTrace()
-                Toast.makeText(context, "שגיאה בפתיחת המצלמה", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Error opening camera", Toast.LENGTH_SHORT).show()
             }
         }, ContextCompat.getMainExecutor(context))
         
         onDispose {
-            currentRecording?.stop()
-            currentRecording = null
-            onRecordingUpdate(null)
+            // Camera cleanup handled by lifecycle owner
         }
     }
     
