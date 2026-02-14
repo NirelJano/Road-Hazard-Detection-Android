@@ -8,6 +8,7 @@ import com.roadhazard.app.ui.screens.auth.ForgotPasswordScreen
 import com.roadhazard.app.ui.screens.auth.LoginScreen
 import com.roadhazard.app.ui.screens.auth.SignupScreen
 
+import com.roadhazard.app.ui.screens.camera.LiveDetectionScreen
 import com.roadhazard.app.ui.screens.dashboard.DashboardScreen
 import com.roadhazard.app.ui.screens.home.HomeScreen
 import com.roadhazard.app.ui.screens.settings.SettingsScreen
@@ -89,7 +90,11 @@ fun NavGraph(
         }
         
         composable(route = Screen.Camera.route) {
-            // Placeholder - CameraScreen to be created
+            LiveDetectionScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
         }
         
         composable(route = Screen.Upload.route) {

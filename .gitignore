@@ -90,3 +90,6 @@ lint/tmp/
 
 # macOS
 .DS_Store
+
+# Project internal documentation (not for public repo)
+PROJECT_SPEC.md
