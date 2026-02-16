@@ -88,11 +88,3 @@ All dependencies are managed via Version Catalog in `gradle/libs.versions.toml`:
 
 - **Debug:** Development build with logging enabled
 - **Release:** Production build with ProGuard/R8 optimization
-
-## 📝 License
-
-[Add your license here]
-
-## 👥 Contributors
-
-[Add contributors here]

@@ -31,7 +31,14 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Close
 import kotlinx.coroutines.delay
+import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.clickable
 
 @Composable
 fun DashboardScreen(
@@ -39,6 +46,9 @@ fun DashboardScreen(
 ) {
     val reports by viewModel.reports.collectAsState()
     val isExpanded by viewModel.isReportsExpanded.collectAsState()
+    
+    // State for viewing image
+    var selectedImageUrl by remember { mutableStateOf<String?>(null) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // 1. Map Component
@@ -71,9 +81,18 @@ fun DashboardScreen(
             ReportsLog(
                 reports = reports,
                 isExpanded = isExpanded,
-                onToggleExpand = { viewModel.toggleReportsExpansion() }
+                onToggleExpand = { viewModel.toggleReportsExpansion() },
+                onViewImage = { url -> selectedImageUrl = url }
             )
         }
+    }
+    
+    // Image Viewer Dialog
+    if (selectedImageUrl != null) {
+        ImageViewerDialog(
+            imageUrl = selectedImageUrl!!,
+            onDismiss = { selectedImageUrl = null }
+        )
     }
 }
 
@@ -144,7 +163,8 @@ fun DashboardMap() {
 fun ReportsLog(
     reports: List<Report>,
     isExpanded: Boolean,
-    onToggleExpand: () -> Unit
+    onToggleExpand: () -> Unit,
+    onViewImage: (String) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         // Header / Title Row with Toggle Button
@@ -187,7 +207,7 @@ fun ReportsLog(
             // List
             LazyColumn {
                 items(reports) { report ->
-                    ReportRow(report)
+                    ReportRow(report, onViewImage)
                     HorizontalDivider()
                 }
             }
@@ -206,7 +226,10 @@ fun RowScope.HeaderCell(text: String, weight: Float) {
 }
 
 @Composable
-fun ReportRow(report: Report) {
+fun ReportRow(
+    report: Report, 
+    onViewImage: (String) -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -221,7 +244,12 @@ fun ReportRow(report: Report) {
         // Image Indicator
         Box(modifier = Modifier.weight(0.1f)) {
             if (report.imageUrl != null) {
-                Text("View", color = Color.Blue, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = "View", 
+                    color = Color.Blue, 
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.clickable { onViewImage(report.imageUrl) }
+                )
             } else {
                 Text("No", color = Color.Gray, style = MaterialTheme.typography.bodyMedium)
             }
@@ -242,5 +270,40 @@ fun ReportRow(report: Report) {
         )
         
         Text(text = report.reportedBy, modifier = Modifier.weight(0.2f), style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+fun ImageViewerDialog(imageUrl: String, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight()
+                .background(Color.Black, shape = RoundedCornerShape(16.dp))
+                .padding(4.dp)
+        ) {
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .zIndex(1f)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Close",
+                    tint = Color.White
+                )
+            }
+            
+            AsyncImage(
+                model = imageUrl,
+                contentDescription = "Report Image",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 40.dp, bottom = 16.dp),
+                contentScale = ContentScale.Fit
+            )
+        }
     }
 }

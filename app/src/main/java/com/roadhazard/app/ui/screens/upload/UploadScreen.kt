@@ -11,6 +11,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -29,44 +32,65 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
-import androidx.exifinterface.media.ExifInterface
 import coil.compose.AsyncImage
 import java.io.File
-import java.io.InputStream
 import android.content.Intent
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UploadScreen(
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    viewModel: ImageUploadViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
-    var imageUri by remember { mutableStateOf<Uri?>(null) }
+    val uiState by viewModel.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    
     var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
-    var showLocationMissingDialog by remember { mutableStateOf(false) }
+    
+    // Show snackbar on error
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearError()
+        }
+    }
 
     // Prepare permission list based on API level
     val permissions = remember {
@@ -75,6 +99,7 @@ fun UploadScreen(
                 Manifest.permission.CAMERA,
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_MEDIA_LOCATION,
                 Manifest.permission.READ_MEDIA_IMAGES,
                 Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
             )
@@ -83,7 +108,16 @@ fun UploadScreen(
                 Manifest.permission.CAMERA,
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_MEDIA_LOCATION,
                 Manifest.permission.READ_MEDIA_IMAGES
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            listOf(
+                Manifest.permission.CAMERA,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_MEDIA_LOCATION,
+                Manifest.permission.READ_EXTERNAL_STORAGE
             )
         } else {
             listOf(
@@ -95,39 +129,12 @@ fun UploadScreen(
         }
     }
 
-    fun hasLocationMetadata(uri: Uri): Boolean {
-        return try {
-            val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
-            if (inputStream != null) {
-                val exif = ExifInterface(inputStream)
-                val lat = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE)
-                val latRef = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE_REF)
-                val long = exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE)
-                val longRef = exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF)
-                inputStream.close()
-                lat != null && latRef != null && long != null && longRef != null
-            } else {
-                false
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
-    }
-
     // Camera launcher
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
         if (success && tempCameraUri != null) {
-            // Check metadata
-            if (hasLocationMetadata(tempCameraUri!!)) {
-                imageUri = tempCameraUri
-            } else {
-                showLocationMissingDialog = true
-                // Do not keep the image if it's invalid
-                // Optional: imageUri = null 
-            }
+            viewModel.uploadImage(tempCameraUri!!, isFromCamera = true)
         }
     }
 
@@ -136,11 +143,7 @@ fun UploadScreen(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-             if (hasLocationMetadata(uri)) {
-                imageUri = uri
-            } else {
-                showLocationMissingDialog = true
-            }
+            viewModel.uploadImage(uri, isFromCamera = false)
         }
     }
 
@@ -279,20 +282,8 @@ fun UploadScreen(
         )
     }
 
-    if (showLocationMissingDialog) {
-         AlertDialog(
-            onDismissRequest = { showLocationMissingDialog = false },
-            title = { Text("Location Missing") },
-            text = { Text("The selected image does not contain location data (GPS coordinates). Please ensure 'Save location' is enabled in your Camera app settings and try again.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showLocationMissingDialog = false
-                }) {
-                    Text("OK")
-                }
-            }
-        )
-    }
+
+    
 
     Scaffold(
         topBar = {
@@ -304,95 +295,204 @@ fun UploadScreen(
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Top
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
             
-            // Image Preview Area
-            Card(
+            // Image Preview Area with Bounding Boxes - Takes most of the screen
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(300.dp)
+                    .weight(1f), // This makes the image take up all available space
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (imageUri != null) {
-                        AsyncImage(
-                            model = imageUri,
-                            contentDescription = "Selected Image",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
+                if (uiState.selectedImageUri != null) {
+                    ImageWithBoundingBoxes(
+                        imageUri = uiState.selectedImageUri!!,
+                        detectionResult = uiState.detectionResult
+                    )
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.Image,
+                            contentDescription = null,
+                            modifier = Modifier.size(120.dp), 
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("No image selected", style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+                
+                // Loading indicator
+                if (uiState.isLoading) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+            }
+
+            // Bottom section with buttons
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Show detection results if available
+                if (uiState.detectionResult != null) {
+                    val detections = uiState.detectionResult!!.detections
+                    if (detections.isNotEmpty()) {
+                        Text(
+                            text = "Found ${detections.size} hazard(s)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
                         )
                     } else {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                imageVector = Icons.Default.Image,
-                                contentDescription = null,
-                                modifier = Modifier.height(64.dp).fillMaxWidth(), 
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text("No image selected", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            text = "No hazards detected",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                
+                
+                // Save Report Button (only shown after detection with hazards)
+                if (uiState.detectionResult != null && uiState.detectionResult!!.detections.isNotEmpty()) {
+                    Button(
+                        onClick = { viewModel.saveReport() },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !uiState.isLoading && !uiState.reportSaved
+                    ) {
+                        Text(if (uiState.reportSaved) "Report Saved!" else "Save Report")
+                    }
+                }
+                
+                // Action Buttons - Always visible at bottom
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Button(
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            checkPermissionsAndAction {
+                                 val uri = composeFileProviderUri(context)
+                                 tempCameraUri = uri
+                                 cameraLauncher.launch(uri)
+                            }
                         }
+                    ) {
+                        Icon(Icons.Default.AddAPhoto, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Camera")
+                    }
+
+                    Button(
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            checkPermissionsAndAction {
+                                 photoPickerLauncher.launch(
+                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                 )
+                            }
+                        }
+                    ) {
+                        Icon(Icons.Default.Image, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Gallery")
                     }
                 }
             }
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Action Buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Button(
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        checkPermissionsAndAction {
-                             val uri = composeFileProviderUri(context)
-                             tempCameraUri = uri
-                             cameraLauncher.launch(uri)
-                        }
+/**
+ * Composable to display image with bounding boxes overlay
+ */
+@Composable
+fun ImageWithBoundingBoxes(
+    imageUri: Uri,
+    detectionResult: com.roadhazard.app.data.model.DetectionResult?
+) {
+    var imageSize by remember { mutableStateOf(IntSize.Zero) }
+    val density = LocalDensity.current
+    
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Display image
+        AsyncImage(
+            model = imageUri,
+            contentDescription = "Selected Image",
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned { coordinates ->
+                    imageSize = coordinates.size
+                },
+            contentScale = ContentScale.Fit
+        )
+        
+        // Draw bounding boxes
+        if (detectionResult != null && imageSize != IntSize.Zero) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val displayWidth = size.width
+                val displayHeight = size.height
+                
+                // Calculate scale factors
+                val scaleX = displayWidth / detectionResult.imageWidth
+                val scaleY = displayHeight / detectionResult.imageHeight
+                
+                // Use the smaller scale to maintain aspect ratio (Fit behavior)
+                val scale = minOf(scaleX, scaleY)
+                
+                // Calculate offsets if image is centered
+                val scaledImageWidth = detectionResult.imageWidth * scale
+                val scaledImageHeight = detectionResult.imageHeight * scale
+                val offsetX = (displayWidth - scaledImageWidth) / 2
+                val offsetY = (displayHeight - scaledImageHeight) / 2
+                
+                detectionResult.detections.forEachIndexed { index, detection ->
+                    val (x1, y1, x2, y2) = detection.bbox
+                    
+                    // Scale coordinates
+                    val displayX1 = x1 * scale + offsetX
+                    val displayY1 = y1 * scale + offsetY
+                    val displayX2 = x2 * scale + offsetX
+                    val displayY2 = y2 * scale + offsetY
+                    
+                    // Different colors for different hazard types
+                    val boxColor = when (detection.label.lowercase()) {
+                        "pothole" -> Color.Red
+                        "crack" -> Color.Yellow
+                        else -> Color.Cyan
                     }
-                ) {
-                    Icon(Icons.Default.AddAPhoto, contentDescription = null)
-                    Spacer(modifier = Modifier.padding(4.dp))
-                    Text("Camera")
+                    
+                    // Draw bounding box
+                    drawRect(
+                        color = boxColor,
+                        topLeft = Offset(displayX1, displayY1),
+                        size = Size(displayX2 - displayX1, displayY2 - displayY1),
+                        style = Stroke(width = 4f)
+                    )
+                    
+                    // Draw label background
+                    val labelText = "${detection.label} ${String.format("%.0f%%", detection.confidence * 100)}"
+                    // Note: For text rendering, consider using AndroidView with Canvas or drawText from native canvas
+                    // For simplicity, we're just drawing the box here
                 }
-
-                Button(
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        checkPermissionsAndAction {
-                             photoPickerLauncher.launch(
-                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                             )
-                        }
-                    }
-                ) {
-                    Icon(Icons.Default.Image, contentDescription = null)
-                    Spacer(modifier = Modifier.padding(4.dp))
-                    Text("Gallery")
-                }
-            }
-            
-            if (imageUri != null) {
-                Spacer(modifier = Modifier.height(16.dp))
-                // Placeholder for future analysis
-                Text(
-                    text = "Image ready for analysis.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
             }
         }
     }
