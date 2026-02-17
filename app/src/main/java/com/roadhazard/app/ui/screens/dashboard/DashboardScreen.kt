@@ -205,7 +205,7 @@ fun ReportsLog(
             }
 
             // List
-            LazyColumn {
+            LazyColumn(modifier = Modifier.weight(1f)) {
                 items(reports) { report ->
                     ReportRow(report, onViewImage)
                     HorizontalDivider()

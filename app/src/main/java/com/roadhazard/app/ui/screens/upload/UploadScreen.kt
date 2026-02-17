@@ -9,9 +9,7 @@ import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,16 +50,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -134,16 +126,16 @@ fun UploadScreen(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
         if (success && tempCameraUri != null) {
-            viewModel.uploadImage(tempCameraUri!!, isFromCamera = true)
+            viewModel.uploadImage(tempCameraUri!!)
         }
     }
 
-    // Photo picker launcher (Gallery)
+    // Gallery launcher (using GetContent to preserve EXIF GPS data)
     val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
+        contract = ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) {
-            viewModel.uploadImage(uri, isFromCamera = false)
+            viewModel.uploadImage(uri)
         }
     }
 
@@ -314,10 +306,21 @@ fun UploadScreen(
                     .weight(1f), // This makes the image take up all available space
                 contentAlignment = Alignment.Center
             ) {
-                if (uiState.selectedImageUri != null) {
-                    ImageWithBoundingBoxes(
-                        imageUri = uiState.selectedImageUri!!,
-                        detectionResult = uiState.detectionResult
+                if (uiState.bboxImageUri != null) {
+                    // Show the pre-rendered image with bounding boxes (same as saved)
+                    AsyncImage(
+                        model = uiState.bboxImageUri,
+                        contentDescription = "Detected Hazards",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit
+                    )
+                } else if (uiState.selectedImageUri != null) {
+                    // Show original image (before detection)
+                    AsyncImage(
+                        model = uiState.selectedImageUri,
+                        contentDescription = "Selected Image",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit
                     )
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -405,9 +408,7 @@ fun UploadScreen(
                         modifier = Modifier.weight(1f),
                         onClick = {
                             checkPermissionsAndAction {
-                                 photoPickerLauncher.launch(
-                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                 )
+                                 photoPickerLauncher.launch("image/*")
                             }
                         }
                     ) {
@@ -421,82 +422,6 @@ fun UploadScreen(
     }
 }
 
-/**
- * Composable to display image with bounding boxes overlay
- */
-@Composable
-fun ImageWithBoundingBoxes(
-    imageUri: Uri,
-    detectionResult: com.roadhazard.app.data.model.DetectionResult?
-) {
-    var imageSize by remember { mutableStateOf(IntSize.Zero) }
-    val density = LocalDensity.current
-    
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Display image
-        AsyncImage(
-            model = imageUri,
-            contentDescription = "Selected Image",
-            modifier = Modifier
-                .fillMaxSize()
-                .onGloballyPositioned { coordinates ->
-                    imageSize = coordinates.size
-                },
-            contentScale = ContentScale.Fit
-        )
-        
-        // Draw bounding boxes
-        if (detectionResult != null && imageSize != IntSize.Zero) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val displayWidth = size.width
-                val displayHeight = size.height
-                
-                // Calculate scale factors
-                val scaleX = displayWidth / detectionResult.imageWidth
-                val scaleY = displayHeight / detectionResult.imageHeight
-                
-                // Use the smaller scale to maintain aspect ratio (Fit behavior)
-                val scale = minOf(scaleX, scaleY)
-                
-                // Calculate offsets if image is centered
-                val scaledImageWidth = detectionResult.imageWidth * scale
-                val scaledImageHeight = detectionResult.imageHeight * scale
-                val offsetX = (displayWidth - scaledImageWidth) / 2
-                val offsetY = (displayHeight - scaledImageHeight) / 2
-                
-                detectionResult.detections.forEachIndexed { index, detection ->
-                    val (x1, y1, x2, y2) = detection.bbox
-                    
-                    // Scale coordinates
-                    val displayX1 = x1 * scale + offsetX
-                    val displayY1 = y1 * scale + offsetY
-                    val displayX2 = x2 * scale + offsetX
-                    val displayY2 = y2 * scale + offsetY
-                    
-                    // Different colors for different hazard types
-                    val boxColor = when (detection.label.lowercase()) {
-                        "pothole" -> Color.Red
-                        "crack" -> Color.Yellow
-                        else -> Color.Cyan
-                    }
-                    
-                    // Draw bounding box
-                    drawRect(
-                        color = boxColor,
-                        topLeft = Offset(displayX1, displayY1),
-                        size = Size(displayX2 - displayX1, displayY2 - displayY1),
-                        style = Stroke(width = 4f)
-                    )
-                    
-                    // Draw label background
-                    val labelText = "${detection.label} ${String.format("%.0f%%", detection.confidence * 100)}"
-                    // Note: For text rendering, consider using AndroidView with Canvas or drawText from native canvas
-                    // For simplicity, we're just drawing the box here
-                }
-            }
-        }
-    }
-}
 
 // Helper to create a temp file and get URI
 private fun composeFileProviderUri(context: Context): Uri {

@@ -15,6 +15,7 @@ class ReportRepository @Inject constructor(
 ) {
     fun getReports(): Flow<List<Report>> = callbackFlow {
         val collection = firestore.collection("reports")
+            .orderBy("date", com.google.firebase.firestore.Query.Direction.DESCENDING)
         
         val subscription = collection.addSnapshotListener { snapshot, error ->
             if (error != null) {

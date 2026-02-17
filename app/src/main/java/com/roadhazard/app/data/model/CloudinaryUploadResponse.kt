@@ -7,5 +7,8 @@ import com.google.gson.annotations.SerializedName
  */
 data class CloudinaryUploadResponse(
     @SerializedName("image_url")
-    val imageUrl: String
+    val imageUrl: String,
+    
+    @SerializedName("public_id")
+    val publicId: String? = null
 )

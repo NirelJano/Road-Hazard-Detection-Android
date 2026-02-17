@@ -1,27 +1,23 @@
 package com.roadhazard.app.ui.screens.upload
 
-import android.Manifest
-import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
-import androidx.core.content.ContextCompat
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.GeoPoint
 import com.roadhazard.app.data.api.DetectionApiService
+import com.roadhazard.app.data.model.DeleteImageRequest
 import com.roadhazard.app.data.model.DetectionResult
 import com.roadhazard.app.data.service.GeocodingService
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -55,25 +51,22 @@ class ImageUploadViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(UploadUiState())
     val uiState: StateFlow<UploadUiState> = _uiState.asStateFlow()
     
-    private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
-    
     /**
      * Upload image to backend for AI inference
      */
-    fun uploadImage(uri: Uri, isFromCamera: Boolean) {
+    fun uploadImage(uri: Uri) {
         viewModelScope.launch {
             try {
-                // Try to extract GPS from EXIF (best-effort, won't block upload)
+                // Try to extract GPS from EXIF
                 val exifCoordinates = extractGpsFromExif(uri)
-                android.util.Log.d("ImageUploadViewModel", "EXIF GPS result: $exifCoordinates, isFromCamera: $isFromCamera")
+                android.util.Log.d("ImageUploadViewModel", "EXIF GPS result: $exifCoordinates")
                 
                 _uiState.value = _uiState.value.copy(
                     selectedImageUri = uri,
                     isLoading = true,
                     error = null,
                     detectionResult = null,
-                    isFromCamera = isFromCamera,
-                    locationFromExif = exifCoordinates  // May be null - that's OK
+                    locationFromExif = exifCoordinates  // May be null - checked at save time
                 )
                 
                 // Convert URI to file for multipart upload
@@ -95,9 +88,17 @@ class ImageUploadViewModel @Inject constructor(
                 file.delete()
                 
                 // Update state with results
+                // If hazards detected, generate the bbox image for display AND saving
+                var bboxImageUri: Uri? = null
+                if (result.detections.isNotEmpty()) {
+                    val bboxFile = createImageWithBoundingBoxes(uri, result)
+                    bboxImageUri = Uri.fromFile(bboxFile)
+                }
+                
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     detectionResult = result,
+                    bboxImageUri = bboxImageUri,
                     error = null
                 )
                 
@@ -115,19 +116,31 @@ class ImageUploadViewModel @Inject constructor(
      * Handles cloud picker URIs gracefully (they strip GPS data).
      */
     private fun extractGpsFromExif(uri: Uri): LatLng? {
+        android.util.Log.d("ImageUploadViewModel", "Starting EXIF extraction for URI: $uri")
+        
         // Try with setRequireOriginal first (for local Photo Picker on Q+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
+                // This is needed for Android 10+ to get the original file with GPS data
                 val originalUri = MediaStore.setRequireOriginal(uri)
                 val coords = getGpsFromStream(originalUri)
-                if (coords != null) return coords
+                if (coords != null) {
+                    android.util.Log.d("ImageUploadViewModel", "Successfully extracted GPS using setRequireOriginal")
+                    return coords
+                }
             } catch (e: Exception) {
-                android.util.Log.d("ImageUploadViewModel", "setRequireOriginal not supported for this URI, trying raw URI")
+                android.util.Log.d("ImageUploadViewModel", "setRequireOriginal failed or not supported: ${e.message}")
             }
         }
         
         // Fall back to raw URI
-        return getGpsFromStream(uri)
+        val coords = getGpsFromStream(uri)
+        if (coords != null) {
+            android.util.Log.d("ImageUploadViewModel", "Successfully extracted GPS using raw URI")
+        } else {
+            android.util.Log.d("ImageUploadViewModel", "No GPS data found in EXIF using any method")
+        }
+        return coords
     }
     
     /**
@@ -135,73 +148,32 @@ class ImageUploadViewModel @Inject constructor(
      */
     private fun getGpsFromStream(uri: Uri): LatLng? {
         return try {
-            val inputStream = context.contentResolver.openInputStream(uri)
-            if (inputStream != null) {
+            context.contentResolver.openInputStream(uri)?.use { inputStream ->
                 val exif = ExifInterface(inputStream)
-                val latLong = FloatArray(2)
-                val hasLatLong = exif.getLatLong(latLong)
-                inputStream.close()
                 
-                if (hasLatLong) {
-                    android.util.Log.d("ImageUploadViewModel", "GPS found: ${latLong[0]}, ${latLong[1]}")
+                // Debug: Log some basic EXIF info to see if it even exists
+                val make = exif.getAttribute(ExifInterface.TAG_MAKE)
+                val model = exif.getAttribute(ExifInterface.TAG_MODEL)
+                val date = exif.getAttribute(ExifInterface.TAG_DATETIME)
+                android.util.Log.d("ImageUploadViewModel", "EXIF Info - Make: $make, Model: $model, Date: $date")
+
+                val latLong = FloatArray(2)
+                if (exif.getLatLong(latLong)) {
+                    android.util.Log.d("ImageUploadViewModel", "GPS found in EXIF: ${latLong[0]}, ${latLong[1]}")
                     LatLng(latLong[0].toDouble(), latLong[1].toDouble())
                 } else {
-                    android.util.Log.d("ImageUploadViewModel", "GPS not found in EXIF for URI: $uri")
-                    null
-                }
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            android.util.Log.d("ImageUploadViewModel", "Error reading EXIF for URI: $uri - ${e.message}")
-            null
-        }
-    }
-    
-    /**
-     * Get device's current location using FusedLocationProviderClient.
-     * Returns null if location permission is not granted or location unavailable.
-     */
-    @SuppressLint("MissingPermission")
-    private suspend fun getDeviceLocation(): LatLng? {
-        return try {
-            val hasPermission = ContextCompat.checkSelfPermission(
-                context, Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(
-                context, Manifest.permission.ACCESS_COARSE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-            
-            if (!hasPermission) {
-                android.util.Log.d("ImageUploadViewModel", "No location permission for device fallback")
-                return null
-            }
-            
-            val cancellationToken = CancellationTokenSource()
-            val location = fusedLocationClient.getCurrentLocation(
-                Priority.PRIORITY_HIGH_ACCURACY,
-                cancellationToken.token
-            ).await()
-            
-            if (location != null) {
-                android.util.Log.d("ImageUploadViewModel", "Device location: ${location.latitude}, ${location.longitude}")
-                LatLng(location.latitude, location.longitude)
-            } else {
-                // Try last known location as final fallback
-                val lastLocation = fusedLocationClient.lastLocation.await()
-                if (lastLocation != null) {
-                    android.util.Log.d("ImageUploadViewModel", "Last known location: ${lastLocation.latitude}, ${lastLocation.longitude}")
-                    LatLng(lastLocation.latitude, lastLocation.longitude)
-                } else {
-                    android.util.Log.e("ImageUploadViewModel", "No device location available")
+                    // Check specifically for GPS latitude tag to see if it's there but maybe malformed
+                    val latTag = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE)
+                    android.util.Log.d("ImageUploadViewModel", "GPS tags: Latitude Tag exists? ${latTag != null}")
                     null
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("ImageUploadViewModel", "Error getting device location", e)
+            android.util.Log.e("ImageUploadViewModel", "Error reading EXIF for URI: $uri", e)
             null
         }
     }
+
     
     /**
      * Draw bounding boxes onto the original image and save as a new file.
@@ -213,26 +185,89 @@ class ImageUploadViewModel @Inject constructor(
         val originalBitmap = BitmapFactory.decodeStream(inputStream)
         inputStream?.close()
         
-        // Create a mutable copy to draw on
-        val mutableBitmap = originalBitmap.copy(Bitmap.Config.ARGB_8888, true)
+        // Read EXIF orientation
+        val exifInputStream = context.contentResolver.openInputStream(uri)
+        val exif = exifInputStream?.let { ExifInterface(it) }
+        val orientation = exif?.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        exifInputStream?.close()
+
+        // Calculate rotation degrees
+        val rotationDegrees = when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> 0f
+        }
+
+        // Rotate bitmap if needed
+        val rotatedBitmap = if (rotationDegrees != 0f) {
+            val matrix = Matrix()
+            matrix.postRotate(rotationDegrees)
+            Bitmap.createBitmap(originalBitmap, 0, 0, originalBitmap.width, originalBitmap.height, matrix, true)
+        } else {
+            originalBitmap
+        }
+
+        // Create a mutable copy to draw on from the (possibly rotated) bitmap
+        val mutableBitmap = rotatedBitmap.copy(Bitmap.Config.ARGB_8888, true)
+        
+        // Capture original dimensions for coordinate transformation
+        val originalWidth = originalBitmap.width.toFloat()
+        val originalHeight = originalBitmap.height.toFloat()
+        
+        // If we created a new rotated bitmap, recycle both it and the original to save memory
+        if (rotatedBitmap != originalBitmap) {
+            rotatedBitmap.recycle()
+        }
+        originalBitmap.recycle()
+
         val canvas = Canvas(mutableBitmap)
         
-        // Scale text/stroke proportionally to image size
+         // Scale text/stroke proportionally to image size
         val scaleFactor = maxOf(mutableBitmap.width, mutableBitmap.height) / 1000f
-        val strokeWidth = 4f * scaleFactor
+        val strokeWidth = 6f * scaleFactor
         val textSize = 28f * scaleFactor
         val padding = 6f * scaleFactor
+        
+        // Green color for all bounding boxes
+        val boxColor = android.graphics.Color.GREEN
         
         // Draw each detection
         detectionResult.detections.forEach { detection ->
             val (x1, y1, x2, y2) = detection.bbox
             
-            // Choose color based on hazard type
-            val boxColor = when (detection.label.lowercase()) {
-                "pothole" -> android.graphics.Color.RED
-                "crack" -> android.graphics.Color.YELLOW
-                else -> android.graphics.Color.CYAN
+            // Transform coordinates if image was rotated
+            // The backend returns coordinates relative to the ORIGINAL (unrotated) image
+            var newX1 = x1
+            var newY1 = y1
+            var newX2 = x2
+            var newY2 = y2
+            
+            if (rotationDegrees == 90f) {
+                // 90 CW: x' = h - y, y' = x
+                newX1 = originalHeight - y1
+                newY1 = x1
+                newX2 = originalHeight - y2
+                newY2 = x2
+            } else if (rotationDegrees == 180f) {
+                // 180: x' = w - x, y' = h - y
+                newX1 = originalWidth - x1
+                newY1 = originalHeight - y1
+                newX2 = originalWidth - x2
+                newY2 = originalHeight - y2
+            } else if (rotationDegrees == 270f) {
+                // 270 CW: x' = y, y' = w - x
+                newX1 = y1
+                newY1 = originalWidth - x1
+                newX2 = y2
+                newY2 = originalWidth - x2
             }
+            
+            // Normalize coordinates (ensure left < right, top < bottom)
+            val finalX1 = minOf(newX1, newX2)
+            val finalY1 = minOf(newY1, newY2)
+            val finalX2 = maxOf(newX1, newX2)
+            val finalY2 = maxOf(newY1, newY2)
             
             // Draw bounding box
             val boxPaint = Paint().apply {
@@ -241,7 +276,7 @@ class ImageUploadViewModel @Inject constructor(
                 this.strokeWidth = strokeWidth
                 isAntiAlias = true
             }
-            canvas.drawRect(x1, y1, x2, y2, boxPaint)
+            canvas.drawRect(finalX1, finalY1, finalX2, finalY2, boxPaint)
             
             // Draw label with background
             val labelText = "${detection.label} ${String.format("%.0f%%", detection.confidence * 100)}"
@@ -260,11 +295,11 @@ class ImageUploadViewModel @Inject constructor(
             textPaint.getTextBounds(labelText, 0, labelText.length, textBounds)
             
             canvas.drawRect(
-                x1, y1 - textBounds.height() - padding * 2,
-                x1 + textBounds.width() + padding * 2, y1,
+                finalX1, finalY1 - textBounds.height() - padding * 2,
+                finalX1 + textBounds.width() + padding * 2, finalY1,
                 bgPaint
             )
-            canvas.drawText(labelText, x1 + padding, y1 - padding, textPaint)
+            canvas.drawText(labelText, finalX1 + padding, finalY1 - padding, textPaint)
         }
         
         // Save to file
@@ -274,8 +309,8 @@ class ImageUploadViewModel @Inject constructor(
         }
         
         // Recycle bitmaps
-        originalBitmap.recycle()
         mutableBitmap.recycle()
+        // originalBitmap was already recycled above
         
         return file
     }
@@ -305,39 +340,31 @@ class ImageUploadViewModel @Inject constructor(
     fun saveReport() {
         val currentUri = _uiState.value.selectedImageUri ?: return
         val detectionResult = _uiState.value.detectionResult ?: return
-        
+
         if (detectionResult.detections.isEmpty()) {
             _uiState.value = _uiState.value.copy(error = "No hazards detected")
             return
         }
-        
+
         viewModelScope.launch {
+            var publicId: String? = null
             try {
                 _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-                
-                // Get GPS coordinates based on image source
-                var coordinates = _uiState.value.locationFromExif
-                
-                if (coordinates == null && _uiState.value.isFromCamera) {
-                    // Camera: user is at the hazard right now, use device GPS
-                    android.util.Log.d("ImageUploadViewModel", "Camera image without EXIF GPS, using device location...")
-                    coordinates = getDeviceLocation()
-                }
-                
+
+                // Use ONLY GPS coordinates from the image's EXIF data
+                val coordinates = _uiState.value.locationFromExif
+
                 if (coordinates == null) {
-                    val errorMsg = if (_uiState.value.isFromCamera) {
-                        "Could not determine location. Please enable location services and try again."
-                    } else {
-                        "The selected image does not contain GPS coordinates. Please use an image with location metadata."
-                    }
+                    // No GPS in image EXIF — cannot save report
+                    android.util.Log.d("ImageUploadViewModel", "No GPS data found in image EXIF, rejecting save")
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        error = errorMsg
+                        error = "The image does not contain location data. Please use an image with GPS metadata, or enable location tagging in your camera settings."
                     )
                     return@launch
                 }
-                
-                android.util.Log.d("ImageUploadViewModel", "Using coordinates: ${coordinates.latitude}, ${coordinates.longitude}")
+
+                android.util.Log.d("ImageUploadViewModel", "Using EXIF coordinates: ${coordinates.latitude}, ${coordinates.longitude}")
                 
                 // Convert coordinates to address (reverse geocoding)
                 val locationAddress = geocodingService.getAddressFromCoordinates(coordinates)
@@ -347,8 +374,13 @@ class ImageUploadViewModel @Inject constructor(
                 val currentUser = firebaseAuth.currentUser
                 val userName = currentUser?.displayName ?: currentUser?.email ?: "Anonymous"
                 
-                // Create image with bounding boxes drawn on it
-                val bboxImageFile = createImageWithBoundingBoxes(currentUri, detectionResult)
+                // Reuse the bbox image that was already generated for display
+                val bboxImageUri = _uiState.value.bboxImageUri
+                val bboxImageFile = if (bboxImageUri != null) {
+                    File(bboxImageUri.path!!)
+                } else {
+                    createImageWithBoundingBoxes(currentUri, detectionResult)
+                }
                 
                 val requestBody = bboxImageFile.asRequestBody("image/jpeg".toMediaTypeOrNull())
                 val imagePart = MultipartBody.Part.createFormData("image", bboxImageFile.name, requestBody)
@@ -356,6 +388,7 @@ class ImageUploadViewModel @Inject constructor(
                 // Call backend to upload to Cloudinary
                 val cloudinaryResponse = detectionApiService.uploadToCloudinary(imagePart)
                 val imageUrl = cloudinaryResponse.imageUrl
+                publicId = cloudinaryResponse.publicId
                 
                 // Clean up temp file
                 bboxImageFile.delete()
@@ -396,6 +429,16 @@ class ImageUploadViewModel @Inject constructor(
                 clearState()
                 
             } catch (e: Exception) {
+                // Cleanup if image was uploaded but operation failed (orphaned image)
+                if (publicId != null) {
+                    try {
+                        detectionApiService.deleteImage(DeleteImageRequest(publicId!!))
+                        android.util.Log.d("ImageUploadViewModel", "Successfully deleted orphaned image: $publicId")
+                    } catch (deleteEx: Exception) {
+                        android.util.Log.e("ImageUploadViewModel", "Failed to delete orphaned image: $publicId", deleteEx)
+                    }
+                }
+
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     error = "Failed to save report: ${e.message}"
@@ -408,6 +451,8 @@ class ImageUploadViewModel @Inject constructor(
      * Clear all state (reset screen)
      */
     fun clearState() {
+        // Clean up temp bbox image file
+        _uiState.value.bboxImageUri?.path?.let { File(it).delete() }
         _uiState.value = UploadUiState()
     }
     
@@ -426,8 +471,8 @@ data class UploadUiState(
     val selectedImageUri: Uri? = null,
     val isLoading: Boolean = false,
     val detectionResult: DetectionResult? = null,
+    val bboxImageUri: Uri? = null,       // Pre-rendered image with bounding boxes drawn
     val error: String? = null,
     val reportSaved: Boolean = false,
-    val isFromCamera: Boolean = false,
     val locationFromExif: LatLng? = null  // GPS extracted from image EXIF
 )
